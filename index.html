@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MWGL Studio v2</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="app">
+    <div class="panel">
+      <h1>MWGL Studio <span class="ver">v2</span></h1>
+      <p class="desc">
+        <strong>MWGL v2</strong>：节点含 <code>start</code>（唯一入口）、<code>wait_user</code>（等待用户交互，中间节点）、<code>trigger</code>（与 switch 配套的触发条件）、<code>switch</code> / <code>loop</code>（出边须 <code>label</code>）、<code>parallel</code>（并行分支）、<code>case</code>、<code>success</code> / <code>failure</code>（终态无出边）。图保持 DAG；迭代用 <code>loop</code> 的「继续/退出」分支或 <code>case</code> 内 <code>【循环】</code> 说明，勿用连线回环。紧凑文本支持 <code>RULE</code>、<code>VERSION 2</code>、<code>开始</code>、<code>条件</code>、<code>CASE</code>；复杂图用 <code>MODE graph</code> + <code>NODE</code>/<code>EDGE</code>。
+      </p>
+    </div>
+
+    <div class="panel inputs">
+      <div>
+        <div>
+          <label for="apiBase">后端代理 Base URL</label>
+          <input id="apiBase" value="http://localhost:3001" />
+        </div>
+      </div>
+      <div>
+        <label for="userPrompt">用户输入（自然语言）</label>
+        <textarea id="userPrompt" placeholder="例如：当订单支付成功，条件 金额是否大于1000，CASE &quot;是&quot; 通知财务；CASE &quot;否&quot; 记录日志"></textarea>
+      </div>
+      <div class="toolbar">
+        <button class="btn-primary" id="btnGenerate">调用 DeepSeek 生成 MWGL</button>
+        <button id="btnParseMwgl">从 MWGL 文本导入</button>
+        <button id="btnExportMwgl">导出 MWGL 文本</button>
+        <button id="btnExportJson">导出 JSON</button>
+      </div>
+      <div class="status" id="status"></div>
+    </div>
+
+    <div class="workbench">
+      <div class="panel">
+        <div class="toolbar toolbar-nodes">
+          <button id="addEvent">start</button>
+          <button id="addWaitUser">wait_user</button>
+          <button id="addTrigger">trigger</button>
+          <button id="addSwitch">switch</button>
+          <button id="addLoop">loop</button>
+          <button id="addParallel">parallel</button>
+          <button id="addCase">case</button>
+          <button id="addSuccess">success</button>
+          <button id="addFailure">failure</button>
+          <button id="btnLayoutLr" type="button">从左到右排列</button>
+        </div>
+        <div class="canvas" id="canvas" tabindex="0">
+          <div class="canvas-viewport" id="canvasViewport">
+            <div class="canvas-world" id="canvasWorld"></div>
+          </div>
+        </div>
+        <div class="hint">工作流默认居中在画布内；空白处拖拽平移；Ctrl+滚轮缩放；节点可拖动；Shift+拖节点可连线；点击边可选中并按 Delete/Backspace 删除。</div>
+      </div>
+
+      <div class="panel">
+        <label for="nodeType">节点类型</label>
+        <select id="nodeType">
+          <option value="start">start</option>
+          <option value="wait_user">wait_user</option>
+          <option value="trigger">trigger</option>
+          <option value="switch">switch</option>
+          <option value="loop">loop</option>
+          <option value="parallel">parallel</option>
+          <option value="case">case</option>
+          <option value="success">success</option>
+          <option value="failure">failure</option>
+        </select>
+        <label for="nodeText">节点文本</label>
+        <textarea id="nodeText" placeholder="节点显示内容。需反复判断时合并为一个 case，并以【循环】开头写明语义"></textarea>
+        <div class="grid-2">
+          <div>
+            <label for="nodeX">X（画布中心为 0，右为正）</label>
+            <input id="nodeX" type="number" />
+          </div>
+          <div>
+            <label for="nodeY">Y（画布中心为 0，下为正）</label>
+            <input id="nodeY" type="number" />
+          </div>
+        </div>
+        <div class="toolbar" style="margin-top:8px;">
+          <button id="saveNode" class="btn-primary">保存节点修改</button>
+          <button id="deleteNode" class="btn-danger">删除节点</button>
+        </div>
+        <div class="hint">没有选中节点时，将自动选择第一个节点。</div>
+        <hr class="section-line" />
+        <label for="edgeFrom">连线起点</label>
+        <select id="edgeFrom"></select>
+        <label for="edgeTo">连线终点</label>
+        <select id="edgeTo"></select>
+        <label for="edgeLabel">分支标签（从 switch / loop 出发必填）</label>
+        <input id="edgeLabel" placeholder="switch：是/否；loop：继续/退出" />
+        <label for="edgeSelect">已有连线</label>
+        <select id="edgeSelect"></select>
+        <div class="toolbar" style="margin-top:8px;">
+          <button id="saveEdge" class="btn-primary">新增/更新连线</button>
+          <button id="deleteEdge" class="btn-danger">删除连线</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="split">
+      <div class="panel">
+        <label for="mwglText">MWGL 文本</label>
+        <textarea id="mwglText"></textarea>
+      </div>
+      <div class="panel">
+        <label>JSON（工作流结构）</label>
+        <pre id="jsonView"></pre>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="./js/main.js"></script>
+</body>
+</html>
