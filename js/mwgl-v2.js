@@ -6,10 +6,11 @@ export const MWGL_VERSION = 2;
 
 /**
  * v2 节点类型：
- * - start：唯一入口（禁止被 switch/case/loop/trigger 指向）
+ * - start：唯一入口（禁止被 switch/case/loop_start/loop_end/parallel 指向）
  * - wait_user：等待用户交互的中间节点
- * - trigger：与 switch 配套的触发条件（通常置于入口与 switch 之间）
- * - switch / loop：分支节点（出边须带非空 label）
+ * - switch：条件分支节点（边标签承载分支条件语义）
+ * - loop_start：循环入口节点（仅进入循环体，不承担退出分流）
+ * - loop_end：循环段结束节点（循环退出后从 loop_end 的后继继续）
  * - parallel：并行分支（至少 2 条出边）
  * - case：动作
  * - success / failure：终态（禁止出边），表示任务成功或失败
@@ -17,9 +18,9 @@ export const MWGL_VERSION = 2;
 export const NODE_TYPES = [
   "start",
   "wait_user",
-  "trigger",
   "switch",
-  "loop",
+  "loop_start",
+  "loop_end",
   "parallel",
   "case",
   "success",
@@ -32,14 +33,6 @@ function isEntryOnlyType(t) {
 
 function isTerminalType(t) {
   return t === "success" || t === "failure";
-}
-
-function isBranchingType(t) {
-  return t === "switch" || t === "loop";
-}
-
-function isParallelType(t) {
-  return t === "parallel";
 }
 
 /**
@@ -55,9 +48,9 @@ export function isAllowedMwglEdge(nodes, fromId, toId) {
     if (
       from.type === "switch" ||
       from.type === "case" ||
-      from.type === "loop" ||
-      from.type === "parallel" ||
-      from.type === "trigger"
+      from.type === "loop_start" ||
+      from.type === "loop_end" ||
+      from.type === "parallel"
     ) {
       return false;
     }
@@ -69,10 +62,11 @@ export function isAllowedMwglEdge(nodes, fromId, toId) {
   return true;
 }
 
-/** 从 switch 或 loop 出发的边必须有非空 label */
+/** 仅从 switch 出发的边必须有非空 label */
 export function edgeHasRequiredSwitchLabel(nodes, edge) {
   const from = nodes.find((n) => n.id === edge.from);
-  if (!from || !isBranchingType(from.type)) return true;
+  if (!from) return true;
+  if (from.type !== "switch") return true;
   return String(edge.label || "").trim().length > 0;
 }
 
@@ -115,6 +109,43 @@ export function validateWorkflowConstraints(workflow) {
   const edges = Array.isArray(workflow?.edges) ? workflow.edges : [];
   const errors = [];
   const nodeMap = new Map(nodes.map((n) => [n.id, n]));
+  const loopEndIds = new Set(nodes.filter((n) => n.type === "loop_end").map((n) => n.id));
+  const loopStartIds = new Set(nodes.filter((n) => n.type === "loop_start").map((n) => n.id));
+
+  function canReachAnyLoopEnd(fromId) {
+    if (!fromId || !nodeMap.has(fromId)) return false;
+    const visited = new Set();
+    const stack = [fromId];
+    while (stack.length) {
+      const cur = stack.pop();
+      if (loopEndIds.has(cur)) return true;
+      if (visited.has(cur)) continue;
+      visited.add(cur);
+      for (const e of edges) {
+        if (e.from !== cur) continue;
+        if (!nodeMap.has(e.to)) continue;
+        if (!visited.has(e.to)) stack.push(e.to);
+      }
+    }
+    return false;
+  }
+
+  function isReachableFromAnyLoopStart(targetId) {
+    if (!targetId || !nodeMap.has(targetId)) return false;
+    for (const startId of loopStartIds) {
+      if (hasDirectedPath(edges, startId, targetId)) return true;
+    }
+    return false;
+  }
+
+  function isSemanticEdgeLabel(label) {
+    const text = String(label || "").trim();
+    if (!text) return false;
+    // 拒绝无语义占位：纯数字或“分支N”
+    if (/^\d+$/.test(text)) return false;
+    if (/^分支\d*$/i.test(text)) return false;
+    return true;
+  }
 
   const starts = nodes.filter((n) => n.type === "start");
   if (starts.length !== 1) {
@@ -122,26 +153,37 @@ export function validateWorkflowConstraints(workflow) {
   }
 
   for (const n of nodes) {
-    if (n.type !== "switch" && n.type !== "loop" && n.type !== "parallel") continue;
+    if (n.type !== "switch" && n.type !== "loop_start" && n.type !== "parallel") continue;
     const outs = edges.filter((e) => e.from === n.id);
     if (n.type === "switch" && outs.length < 1) {
       errors.push(`switch 节点 ${n.id} 至少需要 1 条出边。`);
     }
-    if ((n.type === "loop" || n.type === "parallel") && outs.length < 2) {
+    if (n.type === "loop_start" && outs.length !== 1) {
+      errors.push(`loop_start 节点 ${n.id} 必须且仅能有 1 条出边（进入循环体）。`);
+    }
+    if (n.type === "parallel" && outs.length < 2) {
       errors.push(`${n.type} 节点 ${n.id} 至少需要 2 条出边。`);
     }
-    if (n.type === "switch" || n.type === "loop") {
+    if (n.type === "switch") {
       const labels = outs.map((e) => String(e.label || "").trim()).filter(Boolean);
       if (labels.length !== outs.length) {
-        errors.push(`${n.type} 节点 ${n.id} 的每条出边都必须有非空标签。`);
+        errors.push(`switch 节点 ${n.id} 的每条出边都必须有非空标签。`);
+      } else if (!outs.every((e) => isSemanticEdgeLabel(e.label))) {
+        errors.push(`switch 节点 ${n.id} 的出边标签必须是有语义的条件描述（不能是纯数字或“分支N”）。`);
       } else if (new Set(labels).size !== labels.length) {
-        errors.push(`${n.type} 节点 ${n.id} 的出边标签不能重复。`);
+        errors.push(`switch 节点 ${n.id} 的出边标签不能重复。`);
       }
-      if (n.type === "loop" && outs.length) {
-        if (!labels.includes("继续") || !labels.includes("退出")) {
-          errors.push(`loop 节点 ${n.id} 必须包含「继续」和「退出」两类出边标签。`);
-        }
+    }
+    if (n.type === "loop_start" && outs.length) {
+      if (!canReachAnyLoopEnd(n.id)) {
+        errors.push(`loop_start 节点 ${n.id} 必须存在可达的 loop_end 节点（保证循环有收束点）。`);
       }
+    }
+
+    if (n.type === "loop_end" && outs.length < 1) {
+      errors.push(`loop_end 节点 ${n.id} 至少需要 1 条出边（连接循环后的下一步）。`);
+    } else if (n.type === "loop_end" && !isReachableFromAnyLoopStart(n.id)) {
+      errors.push(`loop_end 节点 ${n.id} 必须由至少一个 loop_start 可达（与循环开始节点完整成对）。`);
     }
   }
 
@@ -165,10 +207,7 @@ export function validateWorkflowConstraints(workflow) {
       }
     }
 
-    const unreachable = nodes.filter((n) => n.id !== startId && !reachable.has(n.id));
-    if (unreachable.length) {
-      errors.push(`存在从 start 不可达的节点：${unreachable.map((n) => n.id).join(", ")}。`);
-    }
+    // 允许存在从 start 不可达的孤立设计节点（仅不参与执行路径）。
 
     const reachableTerminal = nodes.filter(
       (n) => (n.type === "success" || n.type === "failure") && reachable.has(n.id)
@@ -185,10 +224,10 @@ function typeRank(type) {
   const order = {
     start: 0,
     wait_user: 0,
-    trigger: 1,
-    switch: 2,
-    loop: 2,
-    parallel: 2,
+    switch: 1,
+    loop_start: 1,
+    loop_end: 2,
+    parallel: 1,
     case: 3,
     success: 4,
     failure: 4
@@ -282,8 +321,7 @@ function buildDefaultEdges(nodes) {
   if (start && sw) edges.push({ id: uid("e"), from: start.id, to: sw.id, label: "" });
   if (sw && caseNodes.length) {
     caseNodes.forEach((node, idx) => {
-      const label =
-        caseNodes.length === 2 ? (idx === 0 ? "是" : "否") : String(idx + 1);
+      const label = caseNodes.length === 2 ? (idx === 0 ? "是" : "否") : String(idx + 1);
       edges.push({
         id: uid("e"),
         from: sw.id,
@@ -312,14 +350,14 @@ function repairBranchingNodes(workflow) {
   const nodeMap = new Map(nodes.map((n) => [n.id, n]));
 
   for (const node of nodes) {
-    if (node.type !== "switch" && node.type !== "loop" && node.type !== "parallel") continue;
-    const preferred = node.type === "loop" ? ["继续", "退出"] : node.type === "switch" ? ["是", "否"] : ["并行1", "并行2"];
+    if (node.type !== "switch" && node.type !== "loop_start" && node.type !== "parallel") continue;
+    const preferred = node.type === "switch" ? ["是", "否"] : ["并行1", "并行2"];
     const outs = edges.filter((e) => e.from === node.id && nodeMap.has(e.to) && e.from !== e.to);
     const usedLabels = new Set();
 
     for (const e of outs) {
       const raw = String(e.label || "").trim();
-      if ((node.type === "switch" || node.type === "loop") && (!raw || usedLabels.has(raw))) {
+      if (node.type === "switch" && (!raw || usedLabels.has(raw))) {
         const fixed = nextUniqueBranchLabel(usedLabels, preferred);
         e.label = fixed;
         usedLabels.add(fixed);
@@ -329,54 +367,26 @@ function repairBranchingNodes(workflow) {
       }
     }
 
-    while (outs.length < 2) {
+    const minOut = node.type === "loop_start" ? 1 : node.type === "parallel" ? 2 : 0;
+    while (outs.length < minOut) {
       const newCaseId = uid();
       const yOffset = (outs.length + 1) * 96 - 48;
       nodes.push({
         id: newCaseId,
         type: "case",
-        text: node.type === "loop" ? "补全分支 自动生成" : "补充分支 自动生成",
+        text: node.type === "loop_start" ? "补全循环入口 自动生成" : "补充分支 自动生成",
         x: Number(node.x || 0) + 280,
         y: Number(node.y || 0) + yOffset
       });
       nodeMap.set(newCaseId, nodes[nodes.length - 1]);
 
-      const label = node.type === "parallel" ? "" : nextUniqueBranchLabel(usedLabels, preferred);
+      const label = node.type === "switch" ? nextUniqueBranchLabel(usedLabels, preferred) : "";
       const edge = { id: uid("e"), from: node.id, to: newCaseId, label };
       edges.push(edge);
       outs.push(edge);
       if (label) usedLabels.add(label);
     }
 
-    if (node.type === "loop") {
-      if (!usedLabels.has("继续") && outs[0]) outs[0].label = "继续";
-      if (!usedLabels.has("退出") && outs[1]) outs[1].label = "退出";
-    }
-  }
-}
-
-function switchLooksLikeLoop(node, outs) {
-  const text = String(node?.text || "").trim();
-  const labels = new Set(outs.map((e) => String(e.label || "").trim()).filter(Boolean));
-  const hasLoopLabels = labels.has("继续") && labels.has("退出");
-  const textHintsLoop = /^循环/.test(text) || text.includes("迭代");
-  return hasLoopLabels || (textHintsLoop && outs.length >= 2);
-}
-
-function convertSwitchToLoopWhenPossible(workflow) {
-  const nodes = Array.isArray(workflow?.nodes) ? workflow.nodes : [];
-  const edges = Array.isArray(workflow?.edges) ? workflow.edges : [];
-  for (const node of nodes) {
-    if (node.type !== "switch") continue;
-    const outs = edges.filter((e) => e.from === node.id);
-    if (!switchLooksLikeLoop(node, outs)) continue;
-    node.type = "loop";
-    const labels = new Set(outs.map((e) => String(e.label || "").trim()).filter(Boolean));
-    if (!labels.has("继续") && outs[0]) outs[0].label = "继续";
-    if (!labels.has("退出") && outs[1]) outs[1].label = "退出";
-    if (String(node.text || "").startsWith("条件")) {
-      node.text = String(node.text).replace(/^条件/, "循环条件");
-    }
   }
 }
 
@@ -413,7 +423,6 @@ export function normalizeWorkflow(raw) {
     .filter((e) => isAllowedMwglEdge(finalNodes, e.from, e.to))
     .filter((e) => edgeHasRequiredSwitchLabel(finalNodes, e));
 
-  convertSwitchToLoopWhenPossible({ nodes: finalNodes, edges: normalizedEdges });
   repairBranchingNodes({ nodes: finalNodes, edges: normalizedEdges });
 
   let acyclicEdges = filterEdgesAcyclic(normalizedEdges);
@@ -428,7 +437,6 @@ export function normalizeWorkflow(raw) {
 
   // 兜底：先前过滤可能导致分支节点退化为单分支，返回前再次修复并保持 DAG。
   repairBranchingNodes(out);
-  convertSwitchToLoopWhenPossible(out);
   acyclicEdges = filterEdgesAcyclic(out.edges || []);
   out.edges = acyclicEdges;
 
@@ -456,17 +464,17 @@ function collectLinearChainFrom(startId, edges, nodes, allowedTypes) {
 function canMergeLegacyCompact(nodes) {
   const st = nodes.filter((n) => n.type === "start");
   const wu = nodes.filter((n) => n.type === "wait_user");
-  const tr = nodes.filter((n) => n.type === "trigger");
   const sw = nodes.filter((n) => n.type === "switch");
-  const lp = nodes.filter((n) => n.type === "loop");
+  const lpStart = nodes.filter((n) => n.type === "loop_start");
+  const lpEnd = nodes.filter((n) => n.type === "loop_end");
   const suc = nodes.filter((n) => n.type === "success");
   const fail = nodes.filter((n) => n.type === "failure");
   if (
     st.length === 1 &&
     sw.length === 1 &&
     wu.length === 0 &&
-    tr.length === 0 &&
-    lp.length === 0 &&
+    lpStart.length === 0 &&
+    lpEnd.length === 0 &&
     suc.length === 0 &&
     fail.length === 0
   ) {
@@ -504,8 +512,7 @@ export function workflowToMwgl(workflow) {
       onlyCases.forEach((node, idx) => {
         const chain = collectLinearChainFrom(node.id, edges, nodes, ["case"]);
         const body = chain.length ? chain.join("；") : String(node.text || "").trim();
-        const lab =
-          onlyCases.length === 2 ? (idx === 0 ? "是" : "否") : String(idx + 1);
+        const lab = onlyCases.length === 2 ? (idx === 0 ? "是" : "否") : String(idx + 1);
         caseLines.push(`CASE "${lab}" ${body || "无动作"}`);
       });
     }
@@ -599,9 +606,9 @@ export function mwglToWorkflow(text) {
     const fallbackX = {
       start: 120,
       wait_user: 120,
-      trigger: 250,
       switch: 380,
-      loop: 380,
+      loop_start: 380,
+      loop_end: 560,
       parallel: 380,
       case: 680,
       success: 920,
@@ -610,9 +617,9 @@ export function mwglToWorkflow(text) {
     const fallbackY = {
       start: 180,
       wait_user: 300,
-      trigger: 180,
       switch: 180,
-      loop: 320,
+      loop_start: 320,
+      loop_end: 320,
       parallel: 460,
       case: 120,
       success: 120,

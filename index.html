@@ -11,7 +11,7 @@
     <div class="panel">
       <h1>MWGL Studio <span class="ver">v2</span></h1>
       <p class="desc">
-        <strong>MWGL v2</strong>：节点含 <code>start</code>（唯一入口）、<code>wait_user</code>（等待用户交互，中间节点）、<code>trigger</code>（与 switch 配套的触发条件）、<code>switch</code> / <code>loop</code>（出边须 <code>label</code>）、<code>parallel</code>（并行分支）、<code>case</code>、<code>success</code> / <code>failure</code>（终态无出边）。图保持 DAG；迭代用 <code>loop</code> 的「继续/退出」分支或 <code>case</code> 内 <code>【循环】</code> 说明，勿用连线回环。紧凑文本支持 <code>RULE</code>、<code>VERSION 2</code>、<code>开始</code>、<code>条件</code>、<code>CASE</code>；复杂图用 <code>MODE graph</code> + <code>NODE</code>/<code>EDGE</code>。
+        <strong>MWGL v2</strong>：节点含 <code>start</code>（唯一入口）、<code>wait_user</code>（等待用户交互，中间节点）、<code>switch</code>、<code>loop_start</code>/<code>loop_end</code>（循环开始/结束，可在两者间插入复杂逻辑）、<code>parallel</code>（并行分支）、<code>case</code>、<code>success</code> / <code>failure</code>（终态无出边）。边主要表达顺序连接，<code>label</code> 承载分支/触发条件语义。图保持 DAG，勿用连线回环。紧凑文本支持 <code>RULE</code>、<code>VERSION 2</code>、<code>开始</code>、<code>条件</code>、<code>CASE</code>；复杂图用 <code>MODE graph</code> + <code>NODE</code>/<code>EDGE</code>。
       </p>
     </div>
 
@@ -40,9 +40,9 @@
         <div class="toolbar toolbar-nodes">
           <button id="addEvent">start</button>
           <button id="addWaitUser">wait_user</button>
-          <button id="addTrigger">trigger</button>
           <button id="addSwitch">switch</button>
-          <button id="addLoop">loop</button>
+          <button id="addLoopStart">loop_start</button>
+          <button id="addLoopEnd">loop_end</button>
           <button id="addParallel">parallel</button>
           <button id="addCase">case</button>
           <button id="addSuccess">success</button>
@@ -62,9 +62,9 @@
         <select id="nodeType">
           <option value="start">start</option>
           <option value="wait_user">wait_user</option>
-          <option value="trigger">trigger</option>
           <option value="switch">switch</option>
-          <option value="loop">loop</option>
+          <option value="loop_start">loop_start</option>
+          <option value="loop_end">loop_end</option>
           <option value="parallel">parallel</option>
           <option value="case">case</option>
           <option value="success">success</option>
@@ -92,8 +92,8 @@
         <select id="edgeFrom"></select>
         <label for="edgeTo">连线终点</label>
         <select id="edgeTo"></select>
-        <label for="edgeLabel">分支标签（从 switch / loop 出发必填）</label>
-        <input id="edgeLabel" placeholder="switch：是/否；loop：继续/退出" />
+        <label for="edgeLabel">分支/触发条件标签（switch 出发必填）</label>
+        <input id="edgeLabel" placeholder="例如：已认证、金额>1000" />
         <label for="edgeSelect">已有连线</label>
         <select id="edgeSelect"></select>
         <div class="toolbar" style="margin-top:8px;">

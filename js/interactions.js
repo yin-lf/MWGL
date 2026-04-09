@@ -1,15 +1,14 @@
 import { buildWorkflowByDeepSeek } from "./api.js";
 import {
-  edgeHasRequiredSwitchLabel,
+  wouldEdgeCreateCycle,
   isAllowedMwglEdge,
   layoutWorkflowLeftToRight,
   mwglToWorkflow,
   validateWorkflowConstraints,
-  workflowToMwgl,
-  wouldEdgeCreateCycle
+  workflowToMwgl
 } from "./mwgl.js";
 import { state, uid } from "./state.js";
-import { WORLD_HEIGHT, WORLD_WIDTH, screenToUser } from "./viewport.js";
+import { NODE_LAYOUT_HEIGHT, NODE_LAYOUT_WIDTH, WORLD_HEIGHT, WORLD_WIDTH, screenToUser } from "./viewport.js";
 
 export function bindInteractions(elements, renderer) {
   const { setStatus, getSelectedNode, syncEditor, render, applyViewportTransform } = renderer;
@@ -37,19 +36,10 @@ export function bindInteractions(elements, renderer) {
       if (!labels.has("是")) return "是";
       if (!labels.has("否")) return "否";
       for (let i = 3; i <= 99; i += 1) {
-        const opt = String(i);
+        const opt = `条件${i}`;
         if (!labels.has(opt)) return opt;
       }
-      return `c${uid("").slice(-5)}`;
-    }
-    if (fromNode.type === "loop") {
-      if (!labels.has("继续")) return "继续";
-      if (!labels.has("退出")) return "退出";
-      for (let i = 3; i <= 99; i += 1) {
-        const opt = String(i);
-        if (!labels.has(opt)) return opt;
-      }
-      return `c${uid("").slice(-5)}`;
+      return `条件_${uid("").slice(-4)}`;
     }
     return "";
   }
@@ -64,9 +54,9 @@ export function bindInteractions(elements, renderer) {
   const defaultTextForType = {
     start: "开始 新入口",
     wait_user: "等待用户 输入或确认",
-    trigger: "触发条件 条件成立后进入分支",
     switch: "条件 新分支",
-    loop: "循环条件 当条件成立时迭代；退出条件在「退出」分支说明",
+    loop_start: "循环开始 进入循环体（退出统一在 loop_end 后）",
+    loop_end: "循环结束 本轮结束后的收束节点",
     parallel: "并行分支 可同时执行多个动作",
     case: "新动作",
     success: "成功 任务完成",
@@ -74,11 +64,7 @@ export function bindInteractions(elements, renderer) {
   };
 
   function addNode(type) {
-    if (type === "start" && state.workflow.nodes.some((n) => n.type === "start")) {
-      setStatus("只允许存在一个 start 节点。", true);
-      return;
-    }
-    if (type === "switch" || type === "loop" || type === "parallel") {
+    if (type === "switch" || type === "loop_start" || type === "parallel") {
       const x = 120 + Math.floor(Math.random() * 220);
       const y = 120 + Math.floor(Math.random() * 260);
       const br = {
@@ -88,15 +74,20 @@ export function bindInteractions(elements, renderer) {
       };
       Object.assign(br, { x, y });
       const c1 = { id: uid(), type: "case", text: "新动作", x: x + 280, y: y - 48 };
-      const c2 = { id: uid(), type: "case", text: "新动作", x: x + 280, y: y + 48 };
-      state.workflow.nodes.push(br, c1, c2);
+      state.workflow.nodes.push(br, c1);
       state.workflow.edges = state.workflow.edges || [];
-      const l1 = type === "switch" ? "是" : type === "loop" ? "继续" : "";
-      const l2 = type === "switch" ? "否" : type === "loop" ? "退出" : "";
-      state.workflow.edges.push(
-        { id: uid("e"), from: br.id, to: c1.id, label: l1 },
-        { id: uid("e"), from: br.id, to: c2.id, label: l2 }
-      );
+      if (type === "switch" || type === "parallel") {
+        const c2 = { id: uid(), type: "case", text: "新动作", x: x + 280, y: y + 48 };
+        state.workflow.nodes.push(c2);
+        const l1 = type === "switch" ? "是" : "";
+        const l2 = type === "switch" ? "否" : "";
+        state.workflow.edges.push(
+          { id: uid("e"), from: br.id, to: c1.id, label: l1 },
+          { id: uid("e"), from: br.id, to: c2.id, label: l2 }
+        );
+      } else {
+        state.workflow.edges.push({ id: uid("e"), from: br.id, to: c1.id, label: "" });
+      }
       state.selectedNodeId = br.id;
       state.selectedEdgeId = null;
       layoutWorkflowLeftToRight(state.workflow);
@@ -122,37 +113,15 @@ export function bindInteractions(elements, renderer) {
     const node = getSelectedNode();
     if (!node) return;
     const nextType = elements.nodeType.value;
-    if (
-      nextType === "start" &&
-      state.workflow.nodes.some((n) => n.id !== node.id && n.type === "start")
-    ) {
-      setStatus("只允许存在一个 start 节点。", true);
-      return;
-    }
-    const snapshot = { type: node.type, text: node.text, x: node.x, y: node.y };
     node.type = nextType;
     node.text = elements.nodeText.value.trim() || "未命名节点";
     node.x = Number(elements.nodeX.value || 0);
     node.y = Number(elements.nodeY.value || 0);
-    const err = firstConstraintError(state.workflow);
-    if (err) {
-      node.type = snapshot.type;
-      node.text = snapshot.text;
-      node.x = snapshot.x;
-      node.y = snapshot.y;
-      setStatus(`节点修改未通过约束校验：${err}`, true);
-      return;
-    }
     render();
   }
 
   function deleteSelectedNode() {
     if (!state.selectedNodeId) return;
-    const selected = state.workflow.nodes.find((n) => n.id === state.selectedNodeId);
-    if (selected?.type === "start") {
-      setStatus("start 是唯一入口，不能删除。", true);
-      return;
-    }
     const before = state.workflow.nodes.length;
     const removedId = state.selectedNodeId;
     state.workflow.nodes = state.workflow.nodes.filter((n) => n.id !== state.selectedNodeId);
@@ -170,51 +139,27 @@ export function bindInteractions(elements, renderer) {
     const selectedEdgeId = elements.edgeSelect.value;
     if (!from || !to) return setStatus("请先选择连线起点和终点。", true);
     if (from === to) return setStatus("连线起点和终点不能相同。", true);
-    if (!isAllowedMwglEdge(state.workflow.nodes, from, to)) {
-      return setStatus(
-        "不允许该连线（终态 success/failure 不可再连出；入口 start 不可被 switch/case/loop/trigger 指向；禁止 start 直连 start）。",
-        true
-      );
-    }
-
     state.workflow.edges = state.workflow.edges || [];
-    const edgesWithoutSelected = selectedEdgeId
-      ? state.workflow.edges.filter((e) => e.id !== selectedEdgeId)
-      : state.workflow.edges;
-    if (wouldEdgeCreateCycle(edgesWithoutSelected, from, to)) {
-      return setStatus(
-        "不允许形成有向环；迭代语义请用 loop 节点（继续/退出）或写在 case 正文，勿用连线回环。",
-        true
-      );
-    }
 
     const fromNodeForLabel = state.workflow.nodes.find((n) => n.id === from);
-    if (!label && (fromNodeForLabel?.type === "switch" || fromNodeForLabel?.type === "loop")) {
+    if (!label && fromNodeForLabel?.type === "switch") {
       label = guessLabelForEdge(from);
       elements.edgeLabel.value = label;
     }
-    const draftEdge = { from, to, label };
-    if (!edgeHasRequiredSwitchLabel(state.workflow.nodes, draftEdge)) {
-      return setStatus(
-        "从 switch 或 loop 出发的边必须填写分支标签（例如 是/否、继续/退出）。",
-        true
-      );
-    }
+    const edgeError = validateEdgeAtEditTime({
+      from,
+      to,
+      label,
+      editingEdgeId: selectedEdgeId || null
+    });
+    if (edgeError) return setStatus(edgeError, true);
 
     if (selectedEdgeId) {
       const edge = state.workflow.edges.find((e) => e.id === selectedEdgeId);
       if (!edge) return setStatus("未找到要更新的连线。", true);
-      const snapshot = { from: edge.from, to: edge.to, label: edge.label };
       edge.from = from;
       edge.to = to;
       edge.label = label;
-      const err = firstConstraintError(state.workflow);
-      if (err) {
-        edge.from = snapshot.from;
-        edge.to = snapshot.to;
-        edge.label = snapshot.label;
-        return setStatus(`连线更新未通过约束校验：${err}`, true);
-      }
       state.selectedEdgeId = edge.id;
       elements.edgeSelect.value = edge.id;
       render();
@@ -222,24 +167,17 @@ export function bindInteractions(elements, renderer) {
       return;
     }
 
-    const fromNode = state.workflow.nodes.find((n) => n.id === from);
-
     const exists = state.workflow.edges.some((e) => e.from === from && e.to === to && e.label === label);
     if (exists) return setStatus("该连线已存在。", true);
     state.workflow.edges.push({ id: uid("e"), from, to, label });
     const createdEdge = state.workflow.edges[state.workflow.edges.length - 1];
-    const err = firstConstraintError(state.workflow);
-    if (err) {
-      state.workflow.edges.pop();
-      return setStatus(`连线新增未通过约束校验：${err}`, true);
-    }
     state.selectedEdgeId = createdEdge.id;
     elements.edgeSelect.value = createdEdge.id;
     render();
-    if ((fromNode?.type === "switch" || fromNode?.type === "loop") && label) {
+    if (fromNodeForLabel?.type === "switch" && label) {
       setTimeout(() => focusEdgeLabelInput(), 0);
     }
-    setStatus("连线已新增。可修改分支标签。");
+    setStatus("连线已新增。");
   }
 
   function deleteEdge() {
@@ -247,19 +185,61 @@ export function bindInteractions(elements, renderer) {
     if (!selectedEdgeId) return setStatus("请先选择要删除的连线。", true);
     const before = (state.workflow.edges || []).length;
     const kept = (state.workflow.edges || []).filter((e) => e.id !== selectedEdgeId);
-    const oldEdges = state.workflow.edges;
     state.workflow.edges = kept;
-    const err = firstConstraintError(state.workflow);
-    if (err) {
-      state.workflow.edges = oldEdges;
-      return setStatus(`连线删除未通过约束校验：${err}`, true);
-    }
     if (state.workflow.edges.length === before) return setStatus("未找到要删除的连线。", true);
     state.selectedEdgeId = null;
     elements.edgeSelect.value = "";
     elements.edgeLabel.value = "";
     render();
     setStatus("连线已删除。");
+  }
+
+  function isSemanticSwitchLabel(label) {
+    const text = String(label || "").trim();
+    if (!text) return false;
+    if (/^\d+$/.test(text)) return false;
+    if (/^分支\d*$/i.test(text)) return false;
+    return true;
+  }
+
+  function validateEdgeAtEditTime({ from, to, label, editingEdgeId = null }) {
+    const nodes = state.workflow.nodes || [];
+    const edges = state.workflow.edges || [];
+    const fromNode = nodes.find((n) => n.id === from);
+
+    if (!from || !to) return "请先选择连线起点和终点。";
+    if (from === to) return "连线起点和终点不能相同。";
+    if (!fromNode) return "未找到连线起点节点。";
+    if (!nodes.some((n) => n.id === to)) return "未找到连线终点节点。";
+    if (!isAllowedMwglEdge(nodes, from, to)) {
+      return "该连线不允许：禁止连到 start，且 success/failure 不能连出边。";
+    }
+
+    const nextEdges = editingEdgeId
+      ? edges.map((e) => (e.id === editingEdgeId ? { ...e, from, to, label } : e))
+      : [...edges, { id: "__new__", from, to, label }];
+    const cycleBaseEdges = editingEdgeId ? edges.filter((e) => e.id !== editingEdgeId) : edges;
+    if (wouldEdgeCreateCycle(cycleBaseEdges, from, to)) {
+      return "该连线不允许：会形成有向环（必须保持 DAG）。";
+    }
+
+    if (fromNode.type === "loop_start") {
+      const outCount = nextEdges.filter((e) => e.from === from).length;
+      if (outCount !== 1) return "loop_start 必须且仅能有 1 条出边。";
+    }
+
+    if (fromNode.type === "switch") {
+      const trimmed = String(label || "").trim();
+      if (!trimmed) return "switch 的每条出边都必须填写非空条件标签。";
+      if (!isSemanticSwitchLabel(trimmed)) return "switch 标签必须是有语义的条件（不能是纯数字或“分支N”）。";
+      const labels = nextEdges
+        .filter((e) => e.from === from)
+        .map((e) => String(e.label || "").trim())
+        .filter(Boolean);
+      if (new Set(labels).size !== labels.length) return "同一 switch 下，出边标签不能重复。";
+    }
+
+    return "";
   }
 
   function bindEdgeEvents() {
@@ -290,14 +270,13 @@ export function bindInteractions(elements, renderer) {
 
     try {
       const workflow = await buildWorkflowByDeepSeek({ base, prompt });
-      const err = firstConstraintError(workflow);
-      if (err) throw new Error(`生成结果不满足约束：${err}`);
       state.workflow = workflow;
       state.selectedNodeId = state.workflow.nodes[0]?.id || null;
       state.selectedEdgeId = null;
       state.pendingCenterViewport = true;
       render();
-      setStatus("已生成 MWGL 并渲染到画布。");
+      const err = firstConstraintError(workflow);
+      setStatus(err ? `已生成并渲染（草稿态，最终导出前请修复：${err}）` : "已生成 MWGL 并渲染到画布。");
     } catch (error) {
       setStatus(`生成失败：${error.message}`, true);
     }
@@ -332,8 +311,8 @@ export function bindInteractions(elements, renderer) {
       const node = state.workflow.nodes.find((n) => n.id === id);
       if (!node) return null;
       return {
-        x: WORLD_WIDTH / 2 + node.x + 100,
-        y: WORLD_HEIGHT / 2 + node.y + 28
+        x: WORLD_WIDTH / 2 + node.x + NODE_LAYOUT_WIDTH / 2,
+        y: WORLD_HEIGHT / 2 + node.y + NODE_LAYOUT_HEIGHT / 2
       };
     }
 
@@ -443,49 +422,34 @@ export function bindInteractions(elements, renderer) {
           const toId = targetEl.dataset.id;
           const fromId = linking.fromId;
           if (fromId !== toId) {
-            if (!isAllowedMwglEdge(state.workflow.nodes, fromId, toId)) {
-              setStatus(
-                "不允许该连线（终态不可再连出；入口 start 不可被控制流指向）。",
-                true
-              );
-            } else if (wouldEdgeCreateCycle(state.workflow.edges || [], fromId, toId)) {
-              setStatus(
-                "不允许形成有向环；请使用 loop 节点或 case 正文描述迭代。",
-                true
-              );
+            const label = guessLabelForEdge(fromId);
+            const edgeError = validateEdgeAtEditTime({
+              from: fromId,
+              to: toId,
+              label,
+              editingEdgeId: null
+            });
+            if (edgeError) {
+              setStatus(edgeError, true);
+              clearPreviewPath();
+              linking = null;
+              return;
+            }
+            const exists = (state.workflow.edges || []).some((e) => e.from === fromId && e.to === toId);
+            if (!exists) {
+              state.workflow.edges = state.workflow.edges || [];
+              const edge = { id: uid("e"), from: fromId, to: toId, label };
+              state.workflow.edges.push(edge);
+              elements.edgeFrom.value = fromId;
+              elements.edgeTo.value = toId;
+              elements.edgeLabel.value = label;
+              state.selectedEdgeId = edge.id;
+              elements.edgeSelect.value = edge.id;
+              render();
+              setTimeout(() => focusEdgeLabelInput(), 0);
+              setStatus("已通过拖线创建连线。");
             } else {
-              const exists = (state.workflow.edges || []).some((e) => e.from === fromId && e.to === toId);
-              if (!exists) {
-                const label = guessLabelForEdge(fromId);
-                if (!edgeHasRequiredSwitchLabel(state.workflow.nodes, { from: fromId, to: toId, label })) {
-                  setStatus(
-                    "从 switch 或 loop 拖出的边必须带分支标签；可在下方「分支标签」中填写。",
-                    true
-                  );
-                } else {
-                  state.workflow.edges = state.workflow.edges || [];
-                  const edge = { id: uid("e"), from: fromId, to: toId, label };
-                  state.workflow.edges.push(edge);
-                  const err = firstConstraintError(state.workflow);
-                  if (err) {
-                    state.workflow.edges = state.workflow.edges.filter((e) => e.id !== edge.id);
-                    setStatus(`拖线新增未通过约束校验：${err}`, true);
-                    clearPreviewPath();
-                    linking = null;
-                    return;
-                  }
-                  elements.edgeFrom.value = fromId;
-                  elements.edgeTo.value = toId;
-                  elements.edgeLabel.value = label;
-                  state.selectedEdgeId = edge.id;
-                  elements.edgeSelect.value = edge.id;
-                  render();
-                  setTimeout(() => focusEdgeLabelInput(), 0);
-                  setStatus("已通过拖线创建连线。可在下方「分支标签」中修改选项名。");
-                }
-              } else {
-                setStatus("该连线已存在。", true);
-              }
+              setStatus("该连线已存在。", true);
             }
           }
         }
@@ -545,14 +509,13 @@ export function bindInteractions(elements, renderer) {
     document.getElementById("btnParseMwgl").addEventListener("click", () => {
       try {
         const workflow = mwglToWorkflow(elements.mwglText.value);
-        const err = firstConstraintError(workflow);
-        if (err) throw new Error(`导入结果不满足约束：${err}`);
         state.workflow = workflow;
         state.selectedNodeId = state.workflow.nodes[0]?.id || null;
         state.selectedEdgeId = null;
         state.pendingCenterViewport = true;
         render();
-        setStatus("已从 MWGL 文本导入。");
+        const err = firstConstraintError(workflow);
+        setStatus(err ? `已导入（草稿态，最终导出前请修复：${err}）` : "已从 MWGL 文本导入。");
       } catch (error) {
         setStatus(`MWGL 导入失败：${error.message}`, true);
       }
@@ -577,9 +540,9 @@ export function bindInteractions(elements, renderer) {
 
     document.getElementById("addEvent").addEventListener("click", () => addNode("start"));
     document.getElementById("addWaitUser").addEventListener("click", () => addNode("wait_user"));
-    document.getElementById("addTrigger").addEventListener("click", () => addNode("trigger"));
     document.getElementById("addSwitch").addEventListener("click", () => addNode("switch"));
-    document.getElementById("addLoop").addEventListener("click", () => addNode("loop"));
+    document.getElementById("addLoopStart").addEventListener("click", () => addNode("loop_start"));
+    document.getElementById("addLoopEnd").addEventListener("click", () => addNode("loop_end"));
     document.getElementById("addParallel").addEventListener("click", () => addNode("parallel"));
     document.getElementById("addCase").addEventListener("click", () => addNode("case"));
     document.getElementById("addSuccess").addEventListener("click", () => addNode("success"));
