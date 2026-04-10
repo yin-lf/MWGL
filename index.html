@@ -19,7 +19,8 @@
       <div>
         <div>
           <label for="apiBase">后端代理 Base URL</label>
-          <input id="apiBase" value="http://localhost:3001" />
+          <!-- <input id="apiBase" value="http://localhost:3001" /> -->
+           <input id="apiBase" value="http://192.168.1.151:3001/" />
         </div>
       </div>
       <div>
@@ -31,6 +32,15 @@
         <button id="btnParseMwgl">从 MWGL 文本导入</button>
         <button id="btnExportMwgl">导出 MWGL 文本</button>
         <button id="btnExportJson">导出 JSON</button>
+        <button id="btnPseudocode">生成伪代码</button>
+        <button id="btnGenCode">生成代码</button>
+        <select id="codeLanguage" style="width:auto;padding:4px 8px;font-size:13px;">
+          <option value="Python">Python</option>
+          <option value="JavaScript">JavaScript</option>
+          <option value="Java">Java</option>
+          <option value="C++">C++</option>
+          <option value="Go">Go</option>
+        </select>
       </div>
       <div class="status" id="status"></div>
     </div>
@@ -111,6 +121,20 @@
       <div class="panel">
         <label>JSON（工作流结构）</label>
         <pre id="jsonView"></pre>
+      </div>
+    </div>
+
+    <div class="split" style="margin-top:2px;">
+      <div class="panel" style="grid-column: 1 / -1;">
+        <label for="pseudocodeText">伪代码（DAG → 结构化伪代码，可手动编辑）</label>
+        <textarea id="pseudocodeText" placeholder="点击「生成伪代码」，将当前 DAG 工作流转换为结构化伪代码。"></textarea>
+      </div>
+    </div>
+
+    <div class="split" style="margin-top:2px;">
+      <div class="panel" style="grid-column: 1 / -1;">
+        <label for="codeText">真实代码（伪代码 → 可执行代码，可手动编辑）</label>
+        <textarea id="codeText" placeholder="先生成伪代码，再点击「生成代码」，将伪代码转换为指定语言的真实代码。"></textarea>
       </div>
     </div>
   </div>

@@ -19,7 +19,10 @@ const elements = {
   edgeFrom: document.getElementById("edgeFrom"),
   edgeTo: document.getElementById("edgeTo"),
   edgeLabel: document.getElementById("edgeLabel"),
-  edgeSelect: document.getElementById("edgeSelect")
+  edgeSelect: document.getElementById("edgeSelect"),
+  pseudocodeText: document.getElementById("pseudocodeText"),
+  codeText: document.getElementById("codeText"),
+  codeLanguage: document.getElementById("codeLanguage")
 };
 
 function bootstrap() {

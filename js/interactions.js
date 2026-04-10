@@ -1,4 +1,4 @@
-import { buildWorkflowByDeepSeek } from "./api.js";
+import { buildWorkflowByDeepSeek, dagToPseudocode, pseudoToCode } from "./api.js";
 import {
   wouldEdgeCreateCycle,
   isAllowedMwglEdge,
@@ -282,6 +282,49 @@ export function bindInteractions(elements, renderer) {
     }
   }
 
+  async function callDeepSeekForPseudocode() {
+    const base = elements.apiBase.value.trim().replace(/\/$/, "");
+    const workflow = state.workflow;
+
+    if (!workflow || !workflow.nodes || !workflow.nodes.length) {
+      return setStatus("当前没有可转换的工作流。", true);
+    }
+
+    localStorage.setItem("mwgl_api_base", base);
+    setStatus("正在调用 DeepSeek 生成伪代码...");
+
+    try {
+      const pseudocode = await dagToPseudocode({ base, workflow });
+      state.pseudocode = pseudocode;
+      elements.pseudocodeText.value = pseudocode;
+      setStatus("已生成伪代码。");
+    } catch (error) {
+      setStatus(`伪代码生成失败：${error.message}`, true);
+    }
+  }
+
+  async function callDeepSeekForCode() {
+    const base = elements.apiBase.value.trim().replace(/\/$/, "");
+    const pseudocode = elements.pseudocodeText.value.trim();
+    const language = elements.codeLanguage.value;
+
+    if (!pseudocode) {
+      return setStatus("请先生成或输入伪代码。", true);
+    }
+
+    localStorage.setItem("mwgl_api_base", base);
+    setStatus(`正在调用 DeepSeek 生成 ${language} 代码...`);
+
+    try {
+      const code = await pseudoToCode({ base, pseudocode, language });
+      state.code = code;
+      elements.codeText.value = code;
+      setStatus(`已生成 ${language} 代码。`);
+    } catch (error) {
+      setStatus(`代码生成失败：${error.message}`, true);
+    }
+  }
+
   function bindCanvasEvents() {
     function syncEdgeSelectionToEditor(edgeId) {
       const edge = (state.workflow.edges || []).find((e) => e.id === edgeId);
@@ -305,6 +348,14 @@ export function bindInteractions(elements, renderer) {
       const px = event.clientX - rect.left;
       const py = event.clientY - rect.top;
       return screenToUser(px, py, state.canvasOffset || { x: 0, y: 0 }, state.canvasScale);
+    }
+
+    function getCanvasWorldPoint(event) {
+      const user = getCanvasPoint(event);
+      return {
+        x: WORLD_WIDTH / 2 + user.x + NODE_LAYOUT_WIDTH / 2,
+        y: WORLD_HEIGHT / 2 + user.y + NODE_LAYOUT_HEIGHT / 2
+      };
     }
 
     function getNodeCenterById(id) {
@@ -370,7 +421,8 @@ export function bindInteractions(elements, renderer) {
 
       if (event.shiftKey) {
         linking = { fromId: id };
-        upsertPreviewPath(id, point.x, point.y);
+        const wp = getCanvasWorldPoint(event);
+        upsertPreviewPath(id, wp.x, wp.y);
         return;
       }
 
@@ -399,8 +451,8 @@ export function bindInteractions(elements, renderer) {
         return;
       }
       if (linking) {
-        const point = getCanvasPoint(event);
-        upsertPreviewPath(linking.fromId, point.x, point.y);
+        const wp = getCanvasWorldPoint(event);
+        upsertPreviewPath(linking.fromId, wp.x, wp.y);
         return;
       }
       if (!state.drag) return;
@@ -529,6 +581,10 @@ export function bindInteractions(elements, renderer) {
       await navigator.clipboard.writeText(text).catch(() => {});
       setStatus("已导出 MWGL（并尝试复制到剪贴板）。");
     });
+
+    document.getElementById("btnPseudocode").addEventListener("click", callDeepSeekForPseudocode);
+
+    document.getElementById("btnGenCode").addEventListener("click", callDeepSeekForCode);
 
     document.getElementById("btnExportJson").addEventListener("click", async () => {
       const err = firstConstraintError(state.workflow);

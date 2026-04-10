@@ -290,6 +290,18 @@ pre {
   grid-template-columns: 1fr 1fr;
   gap: 12px;
 }
+#pseudocodeText {
+  min-height: 220px;
+  font-family: "Cascadia Code", "Fira Code", "Consolas", monospace;
+  font-size: 13px;
+  line-height: 1.5;
+}
+#codeText {
+  min-height: 260px;
+  font-family: "Cascadia Code", "Fira Code", "Consolas", monospace;
+  font-size: 13px;
+  line-height: 1.5;
+}
 @media (max-width: 1080px) {
   .workbench { grid-template-columns: 1fr; }
   .grid-2, .split { grid-template-columns: 1fr; }

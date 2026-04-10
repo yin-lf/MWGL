@@ -29,5 +29,7 @@ export const state = {
   drag: null,
   canvasOffset: { x: 0, y: 0 },
   canvasScale: 1,
-  pendingCenterViewport: true
+  pendingCenterViewport: true,
+  pseudocode: "",
+  code: ""
 };
