@@ -1,0 +1,6 @@
+# MWGL 鲁棒性评估脚本依赖（与 RobustFlow 主仓 evaluate 一致）
+# pip install -r tools/requirements-eval.txt
+networkx>=3.2
+numpy>=1.24
+sentence-transformers>=3.0
+matplotlib>=3.8

@@ -1,0 +1,32 @@
+MWGL 鲁棒性测试数据说明
+========================
+
+1) 本目录 mwgl_robustness_benchmark.jsonl
+   - 手工构造的中文业务需求 + 同义改写（paraphrasing）+ 轻度噪声（light_noise）等变体
+   - 用于复现 RobustFlow 论文中的「语义等价指令 → 工作流应相似」这一检测思路
+   - 可选字段 reference_workflow：若提供，则评估时以该图为 original 参照，无需为 original 再调生成 API
+
+2) RobustFlow 官方大规模数据（DROP / MBPP 等，含 original、requirements、paraphrasing、多档 noise）
+   - 下载：见仓库根目录 README.md「Data Preparation」中的 Google Drive 链接
+     https://drive.google.com/file/d/1OFcKegpBPSEdxy217tZHj2o9QWwnN6tJ/view?usp=drive_link
+   - 放置与改写流程：noise_dataset/DROP/ 等目录下说明
+
+3) 运行评估
+   cd MWGL-v2/MWGL/tools
+   pip install -r requirements-eval.txt
+   python eval_mwgl_robustness.py --dataset ../data/mwgl_robustness_benchmark.jsonl --prompt-metrics-only
+   # 句向量下载：eval_mwgl_robustness.py 已默认使用镜像 https://hf-mirror.com （环境变量 HF_ENDPOINT）。
+   # 若仍失败：加 --lexical-only 做字面对比；或本机模型目录 + --local-files-only。
+   # 若要改用官方 Hub：export HF_ENDPOINT=https://huggingface.co
+   # 需本地已启动 npm start 并配置 DEEPSEEK_API_KEY 时：
+   python eval_mwgl_robustness.py --dataset ../data/mwgl_robustness_benchmark.jsonl --base-url http://127.0.0.1:3001
+
+4) Baseline vs RobustFlow 式管线对比图（与 RobustFlow 评测指标同源：节点/图级 F1）
+   cd MWGL-v2/MWGL/tools
+   pip install matplotlib
+   python mwgl_robustness_ablation.py --base-url http://127.0.0.1:3001 --limit 6
+   # 若图中中文乱码：优先用字体文件路径（最稳）
+   #   python mwgl_robustness_ablation.py ... --plot-font /path/to/NotoSansSC-Regular.otf
+   # 或清除 matplotlib 缓存后重试：rm ~/.matplotlib/fontlist-*.json
+   # 结果：../data/reports/mwgl_ablation_results.csv
+   # 图表：../data/reports/visual/mwgl_ablation_*.png
