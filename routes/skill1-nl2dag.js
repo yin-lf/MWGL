@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { hasKey, callDeepSeek } from "./deepseek.js";
+import { generateMwglWithRobustFlow } from "../lib/mwglRobust.mjs";
 
 const router = Router();
 
@@ -41,12 +42,32 @@ router.post("/api/mwgl/generate", async (req, res) => {
       return res.status(400).json({ error: "prompt is required" });
     }
 
-    const content = await callDeepSeek([
-      { role: "system", content: SYSTEM_PROMPT },
-      { role: "user", content: prompt }
-    ]);
+    let useRobust = !["0", "false", "no", "off"].includes(
+      String(process.env.MWGL_ROBUST || "1").toLowerCase()
+    );
+    // 评估消融：请求体可显式覆盖（true=多样本+择优+修复；false=单次调用）
+    if (req.body != null && Object.prototype.hasOwnProperty.call(req.body, "robust")) {
+      const b = req.body.robust;
+      if (b === false || b === 0 || String(b).toLowerCase() === "false" || String(b) === "0") {
+        useRobust = false;
+      } else if (b === true || b === 1 || String(b).toLowerCase() === "true" || String(b) === "1") {
+        useRobust = true;
+      }
+    }
 
-    res.json({ content });
+    if (!useRobust) {
+      const content = await callDeepSeek(
+        [
+          { role: "system", content: SYSTEM_PROMPT },
+          { role: "user", content: prompt }
+        ],
+        0.2
+      );
+      return res.json({ content, robust: { mode: "single" } });
+    }
+
+    const { content, robust } = await generateMwglWithRobustFlow(prompt, SYSTEM_PROMPT);
+    res.json({ content, robust });
   } catch (error) {
     if (error.status) {
       return res.status(error.status).json({ error: error.message });
